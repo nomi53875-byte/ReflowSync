@@ -8,7 +8,20 @@ import os
 st.set_page_config(page_title="ThermalTune - 專業製程版", layout="wide")
 
 st.title("🔥 ThermalTune: 爐溫專案一鍵生成工具")
-st.markdown("本版本採用「強制變數覆蓋」邏輯，確保開啟同步時，下溫區 100% 跟隨上溫區。")
+st.markdown("本版本採用「Callback 事件觸發」邏輯，確保修改上溫區時，下溫區能即時同步。")
+
+# --- 初始化記憶體 (Session State) ---
+# 預設溫度邏輯
+def get_default_temp(i):
+    return 180 if i <= 3 else 200 + (i-4)*20 if i <= 8 else 260
+
+for i in range(1, 11):
+    t_key = f"t{i}"
+    b_key = f"b{i}"
+    if t_key not in st.session_state:
+        st.session_state[t_key] = get_default_temp(i)
+    if b_key not in st.session_state:
+        st.session_state[b_key] = get_default_temp(i)
 
 # --- 第一區：側邊欄設定 ---
 with st.sidebar:
@@ -20,30 +33,31 @@ with st.sidebar:
     new_part = st.text_input("2. 新產品編號", value="31BBB002-002BFA")
     
     st.divider()
-    # 同步開關
     sync_mode = st.checkbox("同步上下溫區設定", value=True)
+
+# --- 核心連動函式 ---
+def sync_t_to_b(index):
+    # 當上溫區改變時，如果同步開啟，手動強迫下溫區數值等於上溫區
+    if sync_mode:
+        st.session_state[f"b{index}"] = st.session_state[f"t{index}"]
 
 # --- 第二區：爐溫設定區 ---
 st.header("🌡️ 爐溫同步設定 (Zone 1 - 10)")
-
-top_vals = []
-bottom_vals = []
 
 # A. 建立 Top 溫區輸入
 st.subheader("⬆️ Top (上溫區)")
 t_cols = st.columns(10)
 for i in range(1, 11):
     with t_cols[i-1]:
-        default_t = 180 if i <= 3 else 200 + (i-4)*20 if i <= 8 else 260
-        # 建立 Top 輸入框
-        t_val = st.number_input(
+        st.number_input(
             f"T{i}", 
-            value=int(default_t), 
-            key=f"input_top_{i}", 
+            step=1,
+            key=f"t{i}", 
+            on_change=sync_t_to_b, # 只要一改，立刻觸發同步
+            args=(i,),
             label_visibility="collapsed"
         )
         st.caption(f"Z{i} Top")
-        top_vals.append(t_val)
 
 st.divider()
 
@@ -52,26 +66,18 @@ st.subheader("⬇️ Bottom (下溫區)")
 b_cols = st.columns(10)
 for i in range(1, 11):
     with b_cols[i-1]:
-        # 【核心同步點】：如果開啟同步，強制讓 bottom 等於 top 的變數
-        if sync_mode:
-            current_b_val = top_vals[i-1]
-        else:
-            # 如果不開啟同步，則給予原本的預設值（或是保留使用者之前的輸入）
-            current_b_val = top_vals[i-1] 
-
-        # 建立 Bottom 輸入框
-        b_val = st.number_input(
+        # 下溫區的數值與狀態
+        st.number_input(
             f"B{i}", 
-            value=int(current_b_val), 
-            key=f"input_bot_{i}", 
-            disabled=sync_mode, # 同步時鎖定
+            step=1,
+            key=f"b{i}", 
+            disabled=sync_mode, # 同步時鎖定輸入
             label_visibility="collapsed"
         )
         st.caption(f"Z{i} Bot")
-        bottom_vals.append(b_val)
 
-# 整合寫入字串
-final_zone_strings = [f"{top_vals[i]};{bottom_vals[i]}" for i in range(10)]
+# 整合寫入字串 (從 session_state 抓取最終值)
+final_zone_strings = [f"{st.session_state[f't{i}']};{st.session_state[f'b{i}']}" for i in range(1, 11)]
 
 # --- 第三區：核心結構定位取代邏輯 ---
 def process_content_by_structure(raw_data, n_client, n_part, z_str_list):
