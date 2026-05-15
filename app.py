@@ -5,10 +5,10 @@ import re
 import os
 
 # 設定網頁基礎
-st.set_page_config(page_title="ThermalTune - 全面同步版", layout="wide")
+st.set_page_config(page_title="ThermalTune - 全面同步修正版", layout="wide")
 
 st.title("🔥 ThermalTune: 爐溫專案一鍵生成工具")
-st.markdown("本版本已優化「多重編號同步」，確保壓縮檔內的所有檔名與內容均會更新。")
+st.markdown("本版本修正了變數未定義錯誤，並強化了「檔名與路徑」的深度替換邏輯。")
 
 # --- 第一區：側邊欄設定 ---
 with st.sidebar:
@@ -17,8 +17,7 @@ with st.sidebar:
     
     st.divider()
     
-    # 這裡定義母本中所有可能出現的「舊編號」
-    # 如果你發現還有漏掉的編號，可以加進這個列表
+    # 定義母本中可能出現的所有舊編號（請根據你的母本實際情況調整）
     OLD_IDENTIFIERS = ["31ABC001-001AFA", "31BAG902-001ZRA", "31DCC001-001AFA"]
     OLD_CLIENT = "ABC"
     
@@ -38,16 +37,17 @@ for i in range(1, 11):
 # --- 第三區：核心取代邏輯 ---
 def process_content(raw_data, n_client, n_part, v_list):
     try:
+        # 嘗試解碼成文字，若失敗則回傳原始資料
         text = raw_data.decode('utf-8', errors='ignore')
         
         # 1. 取代公司代號
         text = text.replace(OLD_CLIENT, n_client)
         
-        # 2. 循環取代所有已知的舊編號
+        # 2. 循環取代所有已知的舊產品編號
         for old_id in OLD_IDENTIFIERS:
             text = text.replace(old_id, n_part)
         
-        # 3. 取代爐溫標籤
+        # 3. 取代爐溫標籤 <ZoneX_SetPoint>
         for i in range(1, 11):
             tag = f"Zone{i}_SetPoint"
             pattern = f"<{tag}>.*?</{tag}>"
@@ -60,10 +60,11 @@ def process_content(raw_data, n_client, n_part, v_list):
 
 # --- 第四區：打包輸出 ---
 if st.button("🚀 產生並下載完整結果 (.zip)", type="primary"):
+    # 檢查根目錄下的 template_{85|90}.zip
     template_path = f"template_{speed_option}.zip"
     
     if not os.path.exists(template_path):
-        st.error(f"❌ 找不到母本檔案: {template_path}")
+        st.error(f"❌ 找不到母本檔案: {template_path}。請確認 ZIP 檔已上傳至 GitHub 專案首頁。")
     else:
         output_buffer = io.BytesIO()
         try:
@@ -73,18 +74,25 @@ if st.button("🚀 產生並下載完整結果 (.zip)", type="primary"):
                         with zip_ref.open(file_info.filename) as f:
                             original_data = f.read()
                         
-                        # 處理內容
+                        # 處理檔案內容 (文字取代)
                         final_data = process_content(original_data, new_client, new_part, z_vals)
                         
-                        # 【關鍵修正】：同步修改檔名與路徑
-                        # 將所有已知的舊編號都換成新編號
+                        # --- 深度修改檔名與路徑邏輯 ---
                         new_filename = file_info.filename
+                        # 逐一檢查並替換路徑中所有可能的舊編號
                         for old_id in OLD_IDENTIFIERS:
-                            new_filename = new_filename.replace(old_id, n_part)
+                            if old_id in new_filename:
+                                new_filename = new_filename.replace(old_id, new_part)
                         
+                        # 寫入新壓縮檔
                         new_zip.writestr(new_filename, final_data)
             
             st.success("✅ 完整結果已生成！")
-            st.download_button("📥 下載結果", data=output_buffer.getvalue(), file_name=f"{new_part}_Result.zip")
+            st.download_button(
+                label="📥 點此下載結果壓縮檔", 
+                data=output_buffer.getvalue(), 
+                file_name=f"{new_part}_Result.zip",
+                mime="application/zip"
+            )
         except Exception as e:
-            st.error(f"發生錯誤: {e}")
+            st.error(f"執行過程發生錯誤: {e}")
