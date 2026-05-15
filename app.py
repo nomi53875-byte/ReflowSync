@@ -8,7 +8,7 @@ import os
 st.set_page_config(page_title="ThermalTune - 專業製程版", layout="wide")
 
 st.title("🔥 ThermalTune: 爐溫專案一鍵生成工具")
-st.markdown("本版本支援「上下溫區獨立設定」，滿足特殊製程需求。")
+st.markdown("本版本已修正「上下連動」邏輯，開啟同步時，修改上溫區會即時更新下溫區。")
 
 # --- 第一區：側邊欄設定 ---
 with st.sidebar:
@@ -20,37 +20,45 @@ with st.sidebar:
     new_part = st.text_input("2. 新產品編號", value="31BBB002-002BFA")
     
     st.divider()
-    sync_mode = st.checkbox("同步上下溫區設定", value=True, help="開啟時，設定 Top 溫度會自動套用到 Bottom")
+    # 同步開關
+    sync_mode = st.checkbox("同步上下溫區設定", value=True)
 
 # --- 第二區：爐溫設定區 (上下分離排列) ---
 st.header("🌡️ 爐溫同步設定 (Zone 1 - 10)")
 
-# 建立 10 欄
-cols = st.columns(10)
 top_vals = []
 bottom_vals = []
 
-# 建立 Top 溫區輸入 (第一列)
+# 建立 Top 溫區輸入
 st.subheader("⬆️ Top (上溫區)")
 t_cols = st.columns(10)
 for i in range(1, 11):
     with t_cols[i-1]:
         default_t = 180 if i <= 3 else 200 + (i-4)*20 if i <= 8 else 260
-        t_val = st.number_input(f"Z{i} Top", value=int(default_t), key=f"top_{i}", label_visibility="collapsed")
-        st.caption(f"Zone {i}")
+        t_val = st.number_input(f"Zone {i}", value=int(default_t), key=f"top_{i}", label_visibility="collapsed")
+        st.caption(f"Z{i} Top")
         top_vals.append(t_val)
 
-# 建立 Bottom 溫區輸入 (第二列)
+# 建立 Bottom 溫區輸入
 st.subheader("⬇️ Bottom (下溫區)")
 b_cols = st.columns(10)
 for i in range(1, 11):
     with b_cols[i-1]:
-        # 如果開啟同步模式，數值直接帶入 Top 的數值
-        default_b = top_vals[i-1] if sync_mode else (180 if i <= 3 else 200 + (i-4)*20 if i <= 8 else 260)
-        b_val = st.number_input(f"Z{i} Bot", value=int(default_b), key=f"bot_{i}", label_visibility="collapsed")
+        # 【核心修正】：如果同步模式開啟，Bottom 的 value 直接鎖定為 Top 的數值
+        b_default = top_vals[i-1] if sync_mode else top_vals[i-1]
+        
+        # 使用 disabled 屬性：如果開啟同步，則下溫區變為「唯讀」狀態以確保同步
+        b_val = st.number_input(
+            f"Z{i} Bot", 
+            value=int(b_default), 
+            key=f"bot_{i}", 
+            label_visibility="collapsed",
+            disabled=sync_mode 
+        )
+        st.caption(f"Z{i} Bot")
         bottom_vals.append(b_val)
 
-# 整合為寫入格式 [Zone1_val, Zone2_val, ...] 其中每個元素為 "Top;Bottom"
+# 整合為寫入格式 "Top;Bottom"
 final_zone_strings = [f"{top_vals[i]};{bottom_vals[i]}" for i in range(10)]
 
 # --- 第三區：核心結構定位取代邏輯 ---
@@ -58,7 +66,7 @@ def process_content_by_structure(raw_data, n_client, n_part, z_str_list):
     try:
         text = raw_data.decode('utf-8', errors='ignore')
         
-        # 1. 基礎取代
+        # 1. 基礎取代 (公司代號)
         text = text.replace("ABC", n_client)
         
         # 2. 強制位置取代 (XML 標籤)
@@ -67,15 +75,14 @@ def process_content_by_structure(raw_data, n_client, n_part, z_str_list):
             pattern = f"<{tag}>.*?</{tag}>"
             text = re.sub(pattern, f"<{tag}>{n_part}</{tag}>", text)
             
-        # 3. 處理特殊路徑定位
+        # 3. 處理特殊路徑定位 (ReflowFiles 資料夾路徑)
         text = re.sub(r'ReflowFiles\\.*?\\', f'ReflowFiles\\\\{n_part}\\\\', text)
         text = re.sub(r'ReflowFiles\\.*?#', f'ReflowFiles\\\\{n_part}#', text)
 
-        # 4. 爐溫取代 (強制寫入 Top;Bottom 格式)
+        # 4. 爐溫取代 (格式：Top;Bottom)
         for i in range(1, 11):
             tag = f"Zone{i}_SetPoint"
             pattern = f"<{tag}>.*?</{tag}>"
-            # 這裡寫入我們整合好的 "Top溫度;Bottom溫度"
             replacement = f"<{tag}>{z_str_list[i-1]}</{tag}>"
             text = re.sub(pattern, replacement, text)
             
@@ -112,7 +119,7 @@ if st.button("🚀 執行結構化同步並下載", type="primary"):
                         
                         new_zip.writestr(new_name, processed_data)
         
-            st.success("✅ 結構化專案生成完成！")
+            st.success("✅ 專案生成完成！")
             st.download_button("📥 下載結果壓縮檔", data=output_buffer.getvalue(), file_name=f"{new_part}_Result.zip")
         except Exception as e:
             st.error(f"發生錯誤: {e}")
